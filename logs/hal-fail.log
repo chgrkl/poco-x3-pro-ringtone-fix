@@ -1,0 +1,6 @@
+09-08 20:13:47.771 D/msm8974_platform(19752): platform_get_output_snd_device: enter: output devices(0xa), enable_voicerx 0 , is_stereo_spkr 1
+09-08 20:13:47.771 E/msm8974_platform(19752): platform_get_output_snd_device: Invalid combo device(0xa)
+09-08 20:13:47.773 E/audio_hw_primary(19752): pcm_open_prepare_helper: pcm_prepare returned -1
+09-08 20:13:47.827 D/msm8974_platform(19752): platform_get_output_snd_device: enter: output devices(0xa), enable_voicerx 0 , is_stereo_spkr 1
+09-08 20:13:47.827 E/msm8974_platform(19752): platform_get_output_snd_device: Invalid combo device(0xa)
+09-08 20:13:47.830 E/audio_hw_primary(19752): pcm_open_prepare_helper: pcm_prepare returned -1
