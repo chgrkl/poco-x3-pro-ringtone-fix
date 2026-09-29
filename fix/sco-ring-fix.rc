@@ -1,0 +1,25 @@
+# sco-ring-fix.rc - re-apply SCO ringtone fix at boot (LineageOS userdebug only)
+#
+# Installs a oneshot init service that runs /data/local/tmp/sco-ring-fix.sh
+# (ScoRoleFix) after boot completion, so the SONIFICATION/SCO role survives
+# reboots without a PC.
+#
+# Requirements:
+#   - LineageOS userdebug build (seclabel u:r:su:s0 is only permitted on
+#     userdebug/eng; see system/sepolicy private/init.te)
+#   - verity disabled + /system remounted (adb disable-verity, adb remount)
+#   - /data/local/tmp/sco-ring-fix.sh and sco-ring-fix.jar present
+#
+# NOTE: /system/etc/init/*.rc survives reboots but is wiped by OTAs
+# (the /system overlay is reset when the ROM is flashed). Re-run
+# apply-fix.sh after every LineageOS update to reinstall this file.
+
+on property:sys.boot_completed=1
+    start sco-ring-fix
+
+service sco-ring-fix /system/bin/sh /data/local/tmp/sco-ring-fix.sh
+    user root
+    group root
+    seclabel u:r:su:s0
+    oneshot
+    disabled

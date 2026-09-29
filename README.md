@@ -44,8 +44,9 @@ through `audio_hw_hfp`). Silenced the same way → silent WhatsApp ring.
 Fix: `AudioSystem.setDevicesRoleForStrategy(STRATEGY_SONIFICATION, DEVICE_ROLE_DISABLED,
 [AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET, ""])` — removes SCO devices from the ringtone
 strategy only, so it falls back to speaker (+A2DP). Call audio (STRATEGY_PHONE) keeps
-using SCO. Applied with `fix/ScoRoleFix.jar` (app_process, reflection; not reboot-persistent
-→ re-run after reboot, done by `apply-fix.sh` step 4/5).
+using SCO. The role is in-memory engine state, so it is re-applied at every boot by a
+oneshot init service (`fix/sco-ring-fix.rc`, `seclabel u:r:su:s0`, userdebug builds only)
+that runs `fix/sco-ring-fix.sh`. No PC needed after reboots.
 
 **Evidence logs:** see `logs/hal-fail.log`, `logs/telecom-ring-silent.log`,
 `logs/whatsapp-sco-hal-fail.log`
@@ -77,13 +78,15 @@ FIX.md                                      # German write-up of the whole debug
 fix/apply-fix.sh                            # Re-apply script after LineageOS updates (root)
 fix/audio_policy_configuration.fixed.xml    # Fixed XML to push to /vendor
 fix/ScoRoleFix.java                         # app_process tool: disable SCO for SONIFICATION (WhatsApp fix)
-fix/ScoRoleFix.jar                          # prebuilt dex of the above
+fix/sco-ring-fix.jar                         # prebuilt dex of the above
+fix/sco-ring-fix.sh                         # boot script called by the init service
+fix/sco-ring-fix.rc                         # oneshot init service (userdebug), makes fix reboot-persistent
 patches/audio_policy_configuration.orig.xml # Original (from device, identical to upstream)
 patches/audio_policy_configuration.fixed.xml
 patches/audio_policy_configuration.patch    # Unified diff vs. upstream sm8150-common tree
 logs/hal-fail.log                           # HAL failure evidence (Invalid combo device 0xa)
 logs/telecom-ring-silent.log                # Telecom ring/route evidence
-logs/whatsapp-sco-hal-fail.log              # WhatsApp SCO combo failure + fix verification
+logs/whatsapp-sco-hal-fail.log               # WhatsApp SCO combo failure + fix verification
 ```
 
 ## Apply (rooted device, `adb root` available)
@@ -97,8 +100,9 @@ adb shell "kill $(adb shell pidof com.android.bluetooth)"; sleep 3
 adb shell "sqlite3 /data/user_de/0/com.android.bluetooth/databases/bluetooth_db \
   \"UPDATE metadata SET hfp_connection_policy=100, pbap_connection_policy=100 WHERE address='2C:53:D7:FE:67:A4';\""
 adb shell setprop persist.bluetooth.disableinbandringing true
-adb push fix/ScoRoleFix.jar /data/local/tmp/
-adb shell "CLASSPATH=/data/local/tmp/ScoRoleFix.jar app_process / ScoRoleFix 1 2 set '' 32"
+adb push fix/sco-ring-fix.sh fix/sco-ring-fix.jar /data/local/tmp/
+adb shell "chmod 755 /data/local/tmp/sco-ring-fix.sh && sh /data/local/tmp/sco-ring-fix.sh"
+adb push fix/sco-ring-fix.rc /system/etc/init/sco-ring-fix.rc   # boot hook (userdebug)
 adb reboot
 ```
 

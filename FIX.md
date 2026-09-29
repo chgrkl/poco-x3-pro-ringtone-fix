@@ -49,15 +49,20 @@
    sagt `true`) – optional; ohne Offload läuft A2DP über das Bluetooth-Modul (Software-Encoding).
 5. **SCO für Klingelton-Strategie deaktiviert** (neu, 2026-09-29 – WhatsApp/VoIP-Klingelton):
    - `AudioSystem.setDevicesRoleForStrategy(STRATEGY_SONIFICATION=1, DEVICE_ROLE_DISABLED=2,
-     [AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET (0x20), ""])` – via `fix/ScoRoleFix.jar`
-     (app_process-Tool, Reflection auf die @hide-API; com.android.shell hat MODIFY_AUDIO_ROUTING).
+     [AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET (0x20), ""])` – via `fix/sco-ring-fix.jar`
+     (app_process-Tool, Reflection auf die @hide-API; läuft im permissive su-Kontext).
    - Bewirkt: Die Engine wirft SCO-Geräte aus der available-Liste der SONIFICATION-Strategie →
      der WhatsApp-Klingelton fällt auf Speaker(+A2DP) zurück, der 0xa-Combo-Patch entsteht nie.
    - Gesprächs-Audio (STRATEGY_PHONE, WhatsApp-Anruf) läuft weiter über SCO in die Hörgeräte.
    - Check: `adb shell dumpsys media.audio_policy | grep -A2 'Device role per product strategy'`
      → `Strategy(1) Device Role(2) Devices(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET, @:)`
-   - **Nicht reboot-sicher** (Engine-In-Memory-State) → nach jedem Reboot neu setzen, siehe
-     `fix/apply-fix.sh` Schritt 4/5 oder als Boot-Hook (siehe README).
+   - **Reboot-sicher gemacht** (2026-09-29): `fix/sco-ring-fix.rc` installiert einen oneshot
+     init-Service (`seclabel u:r:su:s0` – nur auf userdebug-Builds erlaubt, siehe
+     system/sepolicy `private/init.te`), der nach `sys.boot_completed=1` automatisch
+     `fix/sco-ring-fix.sh` startet und die Rolle neu setzt. Kein PC nach Reboot nötig.
+     Log: `/data/local/tmp/sco-ring-fix.log`.
+     Achtung: Die .rc liegt in /system → OTA wischt sie weg → nach ROM-Update einmal
+     `apply-fix.sh` laufen lassen (Schritt 4/6 installiert den Hook neu).
 
 ## Ergebnis-Verhalten
 - Klingeln (Telefon UND WhatsApp): **Telefon-Lautsprecher** (+ Klingelton in den Hörgeräten via A2DP)
@@ -78,13 +83,23 @@
 adb disable-verity && adb reboot            # nur nach Flash neu nötig
 adb root && adb remount
 adb push fix/ /data/local/tmp/ringtone-fix/
-adb shell sh /data/local/tmp/ringtone-fix/apply-fix.sh   # macht alle 5 Schritte + Reboot
+adb shell sh /data/local/tmp/ringtone-fix/apply-fix.sh   # macht alle 6 Schritte + Reboot
 ```
 
-## Nach jedem normalen Reboot (nur Fix 5 auffrischen)
-Fix 5 ist reiner Engine-Laufzeitzustand und überlebt keinen Reboot:
+## Nach normalen Reboots: nichts tun
+Der Boot-Hook (`/system/etc/init/sco-ring-fix.rc` → Service startet
+`/data/local/tmp/sco-ring-fix.sh`) setzt Fix 5 nach jedem Boot automatisch.
+Kontrolle (optional): `adb shell cat /data/local/tmp/sco-ring-fix.log`
+
+Falls der Hook fehlt (z.B. nach OTA ohne apply-fix.sh): einmalig vom PC
 ```bash
-adb push fix/ScoRoleFix.jar /data/local/tmp/
-adb shell "CLASSPATH=/data/local/tmp/ScoRoleFix.jar app_process / ScoRoleFix 1 2 set '' 32"
+adb push fix/sco-ring-fix.sh fix/sco-ring-fix.jar /data/local/tmp/
+adb shell "chmod 755 /data/local/tmp/sco-ring-fix.sh; sh /data/local/tmp/sco-ring-fix.sh"
+# .rc zusätzlich ins /system legen (remount nötig):
+adb remount && adb push fix/sco-ring-fix.rc /system/etc/init/sco-ring-fix.rc && adb reboot
+```
+Manuell ohne Hook (Notfall, gilt bis zum nächsten Reboot):
+```bash
+adb shell "CLASSPATH=/data/local/tmp/sco-ring-fix.jar app_process / ScoRoleFix 1 2 set '' 32"
 adb shell "dumpsys media.audio_policy | grep -A2 'Device role per product strategy'"
 ```
