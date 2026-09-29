@@ -1,0 +1,37 @@
+# WhatsApp silent ringtone - SCO combo failure and fix verification (2026-09-29)
+
+## Before fix (14:16): WhatsApp incoming call, hearing aids connected
+
+Timeline from logcat (see full grep below):
+1. 14:16:34.104  adev_set_mode: mode 1 (RINGTONE) - WhatsApp sets ring mode
+2. 14:16:34.172  startBluetoothSco() from uid 10384 (com.whatsapp) - WhatsApp opens SCO itself
+3. 14:16:34.306  Playback patch mix 13 -> device 2 (speaker only, ringtone starts)
+4. 14:16:34.831  BT_SCO=on - SCO link established
+5. 14:16:34.983  Playback patch mix 13 -> device a (num_sinks 2: speaker + SCO!)
+6. 14:16:34.988  platform_get_output_snd_device: Invalid combo device(0xa)
+   -> disable_audio_route: low-latency-playback speaker   <- speaker route killed
+7. Ringtone never restarts on speaker -> silent ring, vibration only
+
+Root cause: Engine.cpp STRATEGY_SONIFICATION combines speaker+SCO for the ringtone
+when SCO is connected and is the preferred communication device. Xiaomi primary HAL
+cannot do the combined patch (same bug as speaker+A2DP). The A2DP module move does
+not help here because SCO must stay in the primary HAL (HFP via audio_hw_hfp).
+
+## Fix applied (15:19)
+
+AudioSystem.setDevicesRoleForStrategy(1 /*STRATEGY_SONIFICATION*/,
+    2 /*DEVICE_ROLE_DISABLED*/, [new AudioDeviceAttributes(0x20 /*BT SCO HEADSET*/, "")])
+via fix/ScoRoleFix.jar (app_process reflection, shell has MODIFY_AUDIO_ROUTING).
+
+Verify:
+  dumpsys media.audio_policy | grep -A2 'Device role per product strategy'
+  -> Strategy(1) Device Role(2) Devices(AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET, @:)
+
+## After fix (15:20-15:22): WhatsApp incoming call - WORKS
+
+- No "Invalid combo device" lines anymore (grep count: 0)
+- Ringtone plays: start_output_stream ... devices(0x2)  (speaker)
+- Call audio on SCO: audio-playback-voip devices(0x20) after answering
+
+Note: the role is in-memory engine state, not reboot-persistent. Re-run after reboot
+(apply-fix.sh step 4/5 does it together with the rest).

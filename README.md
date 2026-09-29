@@ -1,11 +1,12 @@
 # Poco X3 Pro (vayu) – Silent Ringtone Fix for Bluetooth Hearing Aids / A2DP
 
 **Device:** POCO X3 Pro (vayu), LineageOS 22.2 (Android 15)  
-**Symptom:** Incoming calls only vibrate when Phonak hearing aids (or other A2DP devices
-without usable in-band ringing) are connected. Without Bluetooth, the ringtone plays
-normally from the loudspeaker. After answering, call audio is routed to the hearing aids.
+**Symptom:** Incoming calls (telephony **and WhatsApp/VoIP**) only vibrate when Phonak
+hearing aids (or other A2DP devices without usable in-band ringing) are connected.
+Without Bluetooth, the ringtone plays normally from the loudspeaker. After answering,
+call audio is routed to the hearing aids.
 
-## Root Cause (three layers)
+## Root Cause (four layers)
 
 ### 1. Telecom in-band ringing (Telecom)
 With HFP connected, Telecom routes the ringtone in-band over BT-SCO into the hearing aids.
@@ -32,7 +33,22 @@ audio_hw_primary: pcm_open_prepare_helper: pcm_prepare returned -1   ← stream 
 The speaker stream fails to start, while A2DP is suspended during ringing (HFP/SCO call
 setup) → completely silent ring, only vibration.
 
-**Evidence logs:** see `logs/hal-fail.log`, `logs/telecom-ring-silent.log`
+### 4. Same HAL bug via SCO for WhatsApp/VoIP ringtones
+WhatsApp sets MODE_RINGTONE and calls `startBluetoothSco()` itself while ringing.
+Once SCO is up, the audio policy engine combines **speaker + SCO** for
+STRATEGY_SONIFICATION (same `Engine.cpp` logic as above) → the identical
+`Invalid combo device(0xa)` combo, but with SCO (0x8) instead of A2DP.
+The A2DP module move cannot fix this: SCO must live in the `primary` HAL (HFP runs
+through `audio_hw_hfp`). Silenced the same way → silent WhatsApp ring.
+
+Fix: `AudioSystem.setDevicesRoleForStrategy(STRATEGY_SONIFICATION, DEVICE_ROLE_DISABLED,
+[AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET, ""])` — removes SCO devices from the ringtone
+strategy only, so it falls back to speaker (+A2DP). Call audio (STRATEGY_PHONE) keeps
+using SCO. Applied with `fix/ScoRoleFix.jar` (app_process, reflection; not reboot-persistent
+→ re-run after reboot, done by `apply-fix.sh` step 4/5).
+
+**Evidence logs:** see `logs/hal-fail.log`, `logs/telecom-ring-silent.log`,
+`logs/whatsapp-sco-hal-fail.log`
 
 ## The Fix
 
@@ -60,11 +76,14 @@ Upstream source of the file: `LineageOS/android_device_xiaomi_sm8150-common/audi
 FIX.md                                      # German write-up of the whole debugging session
 fix/apply-fix.sh                            # Re-apply script after LineageOS updates (root)
 fix/audio_policy_configuration.fixed.xml    # Fixed XML to push to /vendor
+fix/ScoRoleFix.java                         # app_process tool: disable SCO for SONIFICATION (WhatsApp fix)
+fix/ScoRoleFix.jar                          # prebuilt dex of the above
 patches/audio_policy_configuration.orig.xml # Original (from device, identical to upstream)
 patches/audio_policy_configuration.fixed.xml
 patches/audio_policy_configuration.patch    # Unified diff vs. upstream sm8150-common tree
 logs/hal-fail.log                           # HAL failure evidence (Invalid combo device 0xa)
-logs/telecom-ring-silent.log               # Telecom ring/route evidence
+logs/telecom-ring-silent.log                # Telecom ring/route evidence
+logs/whatsapp-sco-hal-fail.log              # WhatsApp SCO combo failure + fix verification
 ```
 
 ## Apply (rooted device, `adb root` available)
@@ -78,6 +97,8 @@ adb shell "kill $(adb shell pidof com.android.bluetooth)"; sleep 3
 adb shell "sqlite3 /data/user_de/0/com.android.bluetooth/databases/bluetooth_db \
   \"UPDATE metadata SET hfp_connection_policy=100, pbap_connection_policy=100 WHERE address='2C:53:D7:FE:67:A4';\""
 adb shell setprop persist.bluetooth.disableinbandringing true
+adb push fix/ScoRoleFix.jar /data/local/tmp/
+adb shell "CLASSPATH=/data/local/tmp/ScoRoleFix.jar app_process / ScoRoleFix 1 2 set '' 32"
 adb reboot
 ```
 
